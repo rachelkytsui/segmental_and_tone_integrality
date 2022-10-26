@@ -1,0 +1,817 @@
+---
+title: "Analysis for 'Perceptual Integrality of Foreign Segmental and Tonal Information: Dimensional Transfer Hypothesis'"
+author: William Choi & Rachel Ka-Ying Tsui
+output: 
+  html_document:
+    df_print: paged
+date: '2022-10-25'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(foreign)
+library(here)
+library(rmarkdown)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(rstatix)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+library(DHARMa)
+library(broom.mixed)
+library(ggplot2)
+library(ggpubr)
+
+options(max.print=5000) 
+options(scipen = 99999)
+options(width = 1000)
+
+```
+
+```{r include=FALSE}
+# read in data
+data_keepers <- read.csv(here("data_keepers.csv"))
+```
+
+```{r echo=FALSE, include=FALSE}
+paged_table(data_keepers,
+            options= list(rows.print = 10))
+```
+
+# **Demographics** {.tabset}
+## Number of participants
+```{r echo=FALSE, warning=FALSE}
+data_keepers %>%
+  group_by(test_group) %>%
+  mutate(test_group = recode(test_group, f2f = "face-to-face", .default = levels(test_group))) %>%
+  count(language_group) 
+```
+
+## Gender of participants
+```{r echo=FALSE, warning=FALSE}
+# remove those participants
+
+data_keepers %>%
+  group_by(test_group, language_group) %>%
+  mutate(test_group = recode(test_group, f2f = "face-to-face", .default = levels(test_group))) %>%
+  count(sex) %>%
+  pivot_wider(names_from = "sex", values_from = "n")
+```
+
+## Age of participants
+```{r echo=FALSE, warning=FALSE}
+data_keepers %>%
+  group_by(test_group, language_group) %>%
+  mutate(test_group = recode(test_group, f2f = "face-to-face", .default = levels(test_group))) %>%
+  summarize(mean_age = mean(age, na.rm=T),
+            sd_age = sd(age, na.rm=T),
+            min_age = min(age, na.rm=T),
+            max_age = max(age, na.rm=T)) %>%
+  mutate(across(where(is.numeric), round, 2))
+```
+
+
+
+# **Stimuli info** {.tabset}
+## Number of stimuli
+```{r echo=FALSE, warning=FALSE}
+data_keepers %>% 
+  mutate(test_group = recode(test_group, f2f = "face-to-face", .default = levels(test_group))) %>%
+  pivot_longer(-c(participant_id, language_group, sex, age, test_group, matches("_orthogonal"), matches("_control")), 
+                 names_to = c('.value', 'item_no'),
+               names_sep = "(?<=[a-z])_(?=[0-9])") %>%
+  filter(participant_id == "212" | participant_id == "142") %>%
+  group_by(test_group) %>%
+  summarize(control_trial_n = sum(!is.na(control)),
+            orthogonal_trial_n = sum(!is.na(orthogonal)))
+  
+```
+
+
+
+# **Main analysis** {.tabset}
+Linear mixed-effects analyses were performed in the R statistical language (Version 4.1.3; R Core Team. 2020) using the lme4 package (Bates, Maechler, Bolker, & Walker, 2015). The lmerTest package (Kuznetsova et al., 2017) was used to calculate the p-values of the models. Our predictor variables were block and language group. Block (control vs. orthogonal) and language group (Cantonese vs. English) were categorical with two levels, with Cantonese control as the reference level. Post-hoc analyses were conducted through pairwise comparisons using the emmeans package (Length, 2022).
+
+```{r include=FALSE}
+# clean proportion data
+data_keepers_item_online <- data_keepers %>% 
+  filter(test_group == "online") %>%
+  select(-c(starts_with(c("dprime", "rt_")))) %>%
+  pivot_longer(-c(participant_id, sex, age, test_group, language_group), names_to = c('.value', 'item_no'),
+               names_sep = "(?<=[a-z])_(?=[0-9])") %>%
+  rename(accuracy_control = control, accuracy_orthogonal = orthogonal, rt_control = control_rt, rt_orthogonal = orthogonal_rt) %>%
+  pivot_longer(-c(participant_id, sex, age, test_group, language_group, item_no), names_to = c('.value', 'block'),
+               names_sep = "_")
+
+# read in stimuli info
+item_data <- read.csv(here("item_data/item_data.csv"))
+
+tone_weight <- read.csv(here("item_data/tone_weight.csv")) %>%
+  rename(tone_n = n)
+
+# append item_data and tone weight to data
+data_keepers_item_online <- data_keepers_item_online %>%
+  mutate(item_no = as.integer(item_no)) %>%
+  left_join(item_data, by = c("item_no", "block")) %>%
+  left_join(tone_weight) %>%
+  mutate(test_group = "online")
+```
+
+```{r include=FALSE}
+# plot main analyses
+pd <- position_dodge(0.05)
+
+d_plot <- data_keepers %>%
+  filter(test_group == "online") %>%
+  select(participant_id, age, sex, test_group, language_group, matches("_control"), matches("_orthogonal")) %>%
+  pivot_longer(-c(participant_id, age, sex, test_group, language_group), names_to = c(".value", "block"), names_sep = "_") %>%
+  group_by(language_group, block) %>%
+  summarize(mean = mean(dprime, na.rm = T),
+            sd = sd(dprime, na.rm = T),
+            se = sd / sqrt(n()),
+            CI_lower = mean - (1.96 * se),
+            CI_upper = mean + (1.96 * se)) %>%
+  rename(dprime = mean) %>%
+  ggplot(aes(x = block, y = dprime, color = language_group, group = language_group)) +
+  geom_point(size = 5, alpha = .75) +
+  geom_line(aes(linetype = language_group, color = language_group), size = 2, alpha = .75) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), color = "black", position = pd, width=.1)  +
+  scale_color_manual(name = "Language group", values=c('#252525','#969696')) +
+  scale_linetype_manual(name = "Language group", values=c("solid", "longdash")) +
+  ylim(0, 3) +
+  theme_minimal() +
+  labs(title = "Panel A: Sensitivity index d'") +
+  xlab("Blocks") +
+  ylab("d'") +
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=18),
+        legend.text=element_text(size=16),
+        legend.position="bottom")
+
+prop_plot <- data_keepers_item_online %>%
+  group_by(language_group, participant_id, block) %>%
+  summarize(mean = mean(accuracy, na.rm = T),
+            sd = sd(accuracy, na.rm = T),
+            se = sd / sqrt(n()),
+            CI_lower = mean - (1.96 * se),
+            CI_upper = mean + (1.96 * se)) %>%
+  rename(accuracy = mean) %>%
+  group_by(language_group, block) %>%
+  summarize(mean = mean(accuracy, na.rm = T),
+            sd = sd(accuracy, na.rm = T),
+            se = sd / sqrt(n()),
+            CI_lower = mean - (1.96 * se),
+            CI_upper = mean + (1.96 * se)) %>%
+  rename(accuracy = mean) %>%
+  ggplot(aes(x = block, y = accuracy, color = language_group, group = language_group)) +
+  geom_point(size = 5, alpha = .75) +
+  geom_line(aes(linetype = language_group, color = language_group), size = 2, alpha = .75) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), color = "black", position = pd, width=.1)  +
+  scale_color_manual(name = "Language group", values=c('#252525','#969696')) +
+  scale_linetype_manual(name = "Language group", values=c("solid", "longdash")) +
+  ylim(0, 1) +
+  theme_minimal() +
+  labs(title = "Panel B: Proportion of accuracy") +
+  xlab("Blocks") +
+  ylab("Proportion of accuracy") +
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=18),
+        legend.text=element_text(size=16),
+        legend.position="bottom")
+
+rt_plot <- data_keepers_item_online %>%
+  group_by(language_group, participant_id, block) %>%
+  summarize(mean = mean(rt, na.rm = T),
+            sd = sd(rt, na.rm = T),
+            se = sd / sqrt(n()),
+            CI_lower = mean - (1.96 * se),
+            CI_upper = mean + (1.96 * se)) %>%
+  rename(rt = mean) %>%
+  group_by(language_group, block) %>%
+  summarize(mean = mean(rt, na.rm = T),
+            sd = sd(rt, na.rm = T),
+            se = sd / sqrt(n()),
+            CI_lower = mean - (1.96 * se),
+            CI_upper = mean + (1.96 * se)) %>%
+  rename(rt = mean) %>%
+  ggplot(aes(x = block, y = rt, color = language_group, group = language_group)) +
+  geom_point(size = 5, alpha = .75) +
+  geom_line(aes(linetype = language_group, color = language_group), size = 2, alpha = .75) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), color = "black", position = pd, width=.1)  +
+  scale_color_manual(name = "Language group", values=c('#252525','#969696')) +
+  scale_linetype_manual(name = "Language group", values=c("solid", "longdash")) +
+  ylim(0, 2000) +
+  theme_minimal() +
+  labs(title = "\n Panel C: Response time") +
+  xlab("Blocks") +
+  ylab("Response time (ms)") +
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=18),
+        legend.text=element_text(size=16),
+        legend.position="bottom")
+
+plot_main <- ggarrange(d_plot, prop_plot , rt_plot ,
+                       nrow = 2, ncol = 2,
+                       common.legend = TRUE,
+                       legend = "bottom")
+```
+
+
+## Average plots by block and language group
+```{r echo=FALSE, message=FALSE, fig.height=12, fig.width=12}
+plot_main
+```
+
+
+## Accuracy: D' score
+In each block of the modified AX task, the d’ was computed by subtracting the z-transform of the hit rate by that of the false alarm rate (Signal Detection Theory, MacMillan & Creelman, 2005). Each correct AB trial was regarded as a hit whereas each incorrect AA trial was regarded as a false alarm. As in previous studies, we manually adjusted perfect false alarm (0) and hit rates (1.0) to .01 and .99 respectively to avoid infinity d’ (Bidelman, Hutka, & Moreno, 2013; Choi et al., 2019). 
+
+### Average d' score
+```{r echo=FALSE, message=FALSE}
+data_keepers %>%
+  filter(test_group == "online") %>%
+  select(participant_id, age, sex, test_group, language_group, matches("_control"), matches("_orthogonal")) %>%
+  pivot_longer(-c(participant_id, age, sex, test_group, language_group), names_to = c(".value", "block"), names_sep = "_") %>%
+  mutate(block = as.factor(block)) %>%
+  group_by(test_group, language_group, block) %>%
+  summarize(mean_dprime = mean(dprime, na.rm = T),
+            sd_dprime = sd(dprime, na.rm = T),
+            min_dprime = min(dprime, na.rm = T),
+            max_dprime = max(dprime, na.rm = T)) %>%
+  mutate(across(where(is.numeric), round, 2))
+```
+
+```{r echo=FALSE, message=FALSE, fig.height=6, fig.width=12}
+average <- data_keepers %>%
+  filter(test_group == "online") %>%
+  select(participant_id, age, sex, test_group, language_group, matches("_control"), matches("_orthogonal")) %>%
+  select(-test_group) %>%
+  pivot_longer(-c(participant_id, age, sex, language_group), names_to = c(".value", "block"),
+               names_sep = "_") %>%
+  mutate(block = as.factor(block)) %>%
+  group_by(language_group, block) %>%
+  summarize(mean = mean(dprime, na.rm = T),
+            sd = sd(dprime, na.rm = T)) %>%
+  rename(dprime = mean)
+
+data_keepers %>%
+  filter(test_group == "online") %>%
+  select(participant_id, age, sex, test_group, language_group, matches("_control"), matches("_orthogonal")) %>%
+  select(-test_group) %>%
+  pivot_longer(-c(participant_id, age, sex, language_group), names_to = c(".value", "block"),
+               names_sep = "_") %>%
+  mutate(block = as.factor(block)) %>%
+  group_by(language_group, block) %>%
+  ggplot(aes(x = block, y = dprime)) +
+  geom_point(size = 2, alpha = 0.3) +
+  geom_line(aes(group = participant_id), size = 1, alpha = 0.3) +
+  facet_grid(. ~ language_group) +
+  geom_point(data = average, size = 5, color = "red") +
+  geom_line(data = average, aes(group = language_group), color = "red", size = 2) +
+  theme_minimal() +
+  labs(title = "Plotting data per participant with the red line showing the group means") +
+  theme(text = element_text(size=18),
+        legend.position="bottom")
+```
+
+
+### Linear mixed-effects model
+Model ran: lmer(dprime ~ block * language_group + (1|participant_id)) 
+
+```{r echo=FALSE}
+dprime_model <- data_keepers %>%
+  filter(test_group == "online") %>%
+  select(participant_id, age, sex, test_group, language_group, matches("_control"), matches("_orthogonal")) %>%
+  pivot_longer(-c(participant_id, age, sex, test_group, language_group), names_to = c(".value", "block"),
+               names_sep = "_") %>%
+  mutate(block = as.factor(block)) %>%
+  filter(test_group == "online") %>%
+  lmer(dprime ~ block * language_group + (1|participant_id), #random slope (block|participant_id) cannot converge due to limited data size
+       data = .)
+
+broom.mixed::tidy(dprime_model) %>%
+  rename(SE = "std.error", 
+         t = "statistic") %>%
+  mutate(p.value = case_when(
+    p.value < .001 ~ "<.001",
+    p.value < .01 ~ "<.01",
+    p.value < .05 ~ "<.05",
+    TRUE ~ as.character(p.value))) %>%
+  mutate(across(where(is.numeric), round, 3))
+
+# --- goodness-of-fit test ---
+#testUniformity(dprime_model)
+#testDispersion(dprime_model) 
+#plotQQunif(dprime_model)
+```
+
+Comparison reference level: Control block × Cantonese group 
+
+* Significant effect of **block**: With the negative estimate, the Cantonese group's performance was lower in the orthogonal block than in the control block.
+* Significant effect of **language_group**: With the negative estimate, the Cantonese group showed better performance than the English group in the control block. 
+* Significant **block × language_group** interaction: The interaction means the effect of block changes with a change in language group. Here the positive estimate suggests that the effect of Cantonese group showing worse performance in the orthogonal block changes when we look at the performance of the English group. The effect of block goes positive for the English group. 
+
+### Post-hoc analysis (adjustment method: Bonferroni)
+block*language group
+```{r}
+emmeans(dprime_model, pairwise ~ block | language_group, adjust = "Bonferroni")[2]
+```
+
+
+## Accuracy: Proportion of accuracy
+### Average proportion of accuracy
+The second accuracy measure was the proportion of trials in each block that listeners gave a correct response to. For each correct trial, a point of 1 was given; otherwise, a point of 0 was given. 
+
+```{r echo=FALSE, message=FALSE}
+data_keepers_item_online %>%
+  group_by(test_group, language_group, participant_id, block) %>%
+  summarize(mean = mean(accuracy, na.rm = T),
+            sd = sd(accuracy, na.rm = T)) %>%
+  rename(accuracy = mean) %>%
+  group_by(test_group, language_group, block) %>%
+  summarize(mean = mean(accuracy, na.rm = T),
+            sd = sd(accuracy, na.rm = T),
+            min = min(accuracy, na.rm = T),
+            max = max(accuracy, na.rm = T)) %>%
+  rename(mean_proportion = mean) %>%
+  mutate(across(where(is.numeric), round, 2))
+```
+
+```{r echo=FALSE, message=FALSE, fig.height=6, fig.width=12}
+average <- data_keepers_item_online %>%
+  group_by(language_group, block) %>%
+  summarize(mean_acc = mean(accuracy, na.rm = T),
+            sd_acc = sd(accuracy, na.rm = T),
+            mean_rt = mean(rt, na.rm = T),
+            sd_rt = sd(rt, na.rm = T)) %>%
+  rename(accuracy = mean_acc, rt = mean_rt)
+
+data_keepers_item_online %>%
+  group_by(language_group, block, participant_id) %>%
+  summarize(accuracy = mean(accuracy, na.rm = T),
+            rt = mean(rt, na.rm = T)) %>%
+  group_by(language_group, block) %>%
+  ggplot(aes(x = block, y = accuracy)) +
+  geom_point(size = 2, alpha = 0.3) +
+  geom_line(aes(group = participant_id), size = 1, alpha = 0.3) +
+  facet_grid(. ~ language_group) +
+  geom_point(data = average, size = 5, color = "red") +
+  geom_line(data = average, aes(group = language_group), color = "red", size = 2) +
+  ylim(0, 1) +
+  theme_minimal() +
+  labs(title = "Plotting data per participant with the red line showing the group means") +
+  theme(text = element_text(size=18),
+        legend.position="bottom")
+```
+
+### Logistic mixed-effects model (indiviual item: n = 80)
+Model ran: glmer(accuracy ~ block * language_group + (1+ block|participant_id) + (1|item_no) + (1|tone) + (1|syllable)
+
+* participant_id and item_no are deﬁned as two diﬀerent sources of variation in the data. We would expect performance to vary by participant and by item.
+* Hence, the simple random intercept for item_no (1|item_no) where each item has its own baseline value.
+* For the random slope of (1 + block|participant_id), we expect different participants to respond to the different blocks in a different way. 
+
+```{r echo=FALSE}
+prop_model_acc <- data_keepers_item_online %>%
+  glmer(accuracy ~ block * language_group + (1+ block|participant_id) + (1|item_no) + (1|tone) + (1|syllable), # not using (1+block|item_no) because different items are used in the two blocks (i.e., between-items: block does not vary within items)
+        data = ., family=binomial)
+
+broom.mixed::tidy(prop_model_acc) %>%
+  rename(SE = "std.error", 
+         z = "statistic") %>%
+  mutate(p.value = case_when(
+    p.value < .001 ~ "<.001",
+    p.value < .01 ~ "<.01",
+    p.value < .05 ~ "<.05",
+    TRUE ~ as.character(p.value))) %>%
+  mutate(across(where(is.numeric), round, 3))
+
+# --- goodness-of-fit test ---
+#testUniformity(prop_model_acc)
+#testDispersion(prop_model_acc) 
+#plotQQunif(prop_model_acc)
+```
+
+We basically observe the same result as in the first accuracy analysis.
+
+Comparison reference level: Control block × Cantonese group 
+
+* Significant effect of **block**: With the negative estimate, the Cantonese group's performance was lower in the orthogonal block than in the control block.
+* Significant effect of **language_group**: With the negative estimate, the Cantonese group showed better performance than the English group in the control block. 
+* Significant **block × language_group** interaction: The interaction means the effect of block changes with a change in language group. Here the positive estimate suggests that the effect of Cantonese group showing worse performance in the orthogonal block changes when we look at the performance of the English group. The effect of block goes positive for the English group. 
+
+### Post-hoc analysis (adjustment method: Bonferroni)
+block*language group
+```{r}
+emmeans(prop_model_acc, pairwise ~ block | language_group, adjust = "Bonferroni")[2]
+```
+
+
+## Response time
+### Average response time
+```{r echo=FALSE, message=FALSE}
+data_keepers_item_online %>%
+  group_by(test_group, language_group, participant_id, block) %>%
+  summarize(mean = mean(rt, na.rm = T),
+            sd = sd(rt, na.rm = T)) %>%
+  rename(rt = mean) %>%
+  group_by(test_group, language_group, block) %>%
+  summarize(mean = mean(rt, na.rm = T),
+            sd = sd(rt, na.rm = T),
+            min = min(rt, na.rm = T),
+            max = max(rt, na.rm = T)) %>%
+  rename(mean_rt = mean) %>%
+  mutate(across(where(is.numeric), round, 2))
+```
+
+```{r echo=FALSE, message=FALSE, fig.height=6, fig.width=12}
+average <- data_keepers_item_online %>%
+  group_by(language_group, block) %>%
+  summarize(mean_acc = mean(accuracy, na.rm = T),
+            sd_acc = sd(accuracy, na.rm = T),
+            mean_rt = mean(rt, na.rm = T),
+            sd_rt = sd(rt, na.rm = T)) %>%
+  rename(accuracy = mean_acc, rt = mean_rt)
+
+data_keepers_item_online %>%
+  group_by(language_group, block, participant_id) %>%
+  summarize(accuracy = mean(accuracy, na.rm = T),
+            rt = mean(rt, na.rm = T)) %>%
+  group_by(language_group, block) %>%
+  ggplot(aes(x = block, y = rt)) +
+  geom_point(size = 2, alpha = 0.3) +
+  geom_line(aes(group = participant_id), size = 1, alpha = 0.3) +
+  facet_grid(. ~ language_group) +
+  geom_point(data = average, size = 5, color = "red") +
+  geom_line(data = average, aes(group = language_group), color = "red", size = 2) +
+  ylim(0, 5000) +
+  theme_minimal() +
+  labs(title = "Plotting data per participant with the red line showing the group means") +
+  theme(text = element_text(size=18),
+        legend.position="bottom")
+
+```
+
+### Linear mixed-effects model (indiviual item: n = 80)
+Model ran: lmer(rt ~ block * language_group + (1 + block|participant_id) + (1|item_no) + (1|tone) + (1|syllable)
+
+```{r echo=FALSE}
+prop_model_rt <- data_keepers_item_online %>%
+  mutate(log_rt = log(rt)) %>%
+  lmer(log_rt ~ block * language_group + (1 + block|participant_id) + (1|item_no) + (1|tone) + (1|syllable),
+        data = .)
+
+broom.mixed::tidy(prop_model_rt) %>%
+  rename(SE = "std.error", 
+         t = "statistic") %>%
+  mutate(across(where(is.numeric), round, 3)) %>%
+  mutate(p.value = case_when(
+    p.value < .001 ~ "<.001",
+    p.value < .01 ~ "<.01",
+    p.value < .05 ~ "<.05",
+    TRUE ~ as.character(p.value)))
+
+# --- goodness-of-fit test ---
+#testUniformity(prop_model_rt)
+#testDispersion(prop_model_rt) 
+#plotQQunif(prop_model_rt)
+```
+
+Comparison reference level: Control block × Cantonese group 
+
+* Significant effect of **block**: With the positive estimate, the Cantonese group took longer to response in the orthogonal block than in the control block.
+* Significant **block × language_group** interaction: The interaction means the effect of block changes with a change in language group. Here the negative estimate suggests that the effect of Cantonese group showing longer RT in the orthogonal block changes when we look at the performance of the English group. The slope is shallower for the English group.
+* The effect of **language_group** did not reach significance level.
+
+### Post-hoc analysis (adjustment method: Bonferroni)
+block*language group
+```{r}
+emmeans(prop_model_rt, pairwise ~ block | language_group, adjust = "Bonferroni",
+              lmer.df = "satterthwaite", lmerTest.limit = 8960)[2]
+```
+
+
+
+# **Supplementary Analysis of Face-to-face Data** {.tabset}
+We analyzed the face-to-face data to supplement the above online results. Since there was not enough face-to-face data from English listeners, we limited the following statistical models to data from the Cantonese listeners. Specifically, we asked whether the face-to-face Cantonese listeners integrally process Thai tones and segmental information.
+
+```{r include=FALSE}
+# clean proportion data
+data_keepers_item_f2f <- data_keepers %>% 
+  filter(test_group == "f2f") %>%
+  select(-c(starts_with(c("dprime", "rt_")))) %>%
+  pivot_longer(-c(participant_id, sex, age, test_group, language_group), names_to = c('.value', 'item_no'),
+               names_sep = "(?<=[a-z])_(?=[0-9])") %>%
+  rename(accuracy_control = control, accuracy_orthogonal = orthogonal, rt_control = control_rt, rt_orthogonal = orthogonal_rt) %>%
+  pivot_longer(-c(participant_id, sex, age, test_group, language_group, item_no), names_to = c('.value', 'block'),
+               names_sep = "_")
+
+# read in stimuli info
+item_data_f2f <- read.csv(here("item_data/item_f2f_data.csv"))
+
+tone_weight_f2f <- read.csv(here("item_data/tone_weight_f2f.csv")) %>%
+  rename(tone_n = n)
+
+# append item_data and tone weight to data
+data_keepers_item_f2f <- data_keepers_item_f2f %>%
+  mutate(item_no = as.integer(item_no)) %>%
+  left_join(item_data_f2f, by = c("item_no", "block")) %>%
+  left_join(tone_weight_f2f) %>%
+  mutate(test_group = "online")
+```
+
+```{r include=FALSE}
+# plot f2f analyses
+pd <- position_dodge(0.05)
+
+f2f_d_plot <- data_keepers %>%
+  filter(test_group == "f2f") %>%
+  select(participant_id, age, sex, test_group, language_group, matches("_control"), matches("_orthogonal")) %>%
+  pivot_longer(-c(participant_id, age, sex, test_group, language_group), names_to = c(".value", "block"), names_sep = "_") %>%
+  group_by(language_group, block) %>%
+  summarize(mean = mean(dprime, na.rm = T),
+            sd = sd(dprime, na.rm = T),
+            se = sd / sqrt(n()),
+            CI_lower = mean - (1.96 * se),
+            CI_upper = mean + (1.96 * se)) %>%
+  rename(dprime = mean) %>%
+  ggplot(aes(x = block, y = dprime, color = language_group, group = language_group)) +
+  geom_point(size = 5, alpha = .75) +
+  geom_line(aes(linetype = language_group, color = language_group), size = 2, alpha = .75) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), color = "black", position = pd, width=.1)  +
+  scale_color_manual(name = "Language group", values=c('#252525','#969696')) +
+  scale_linetype_manual(name = "Language group", values=c("solid", "longdash")) +
+  ylim(0, 3) +
+  theme_minimal() +
+  labs(title = "Panel A: Sensitivity index d'") +
+  xlab("Blocks") +
+  ylab("d'") +
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=18),
+        legend.text=element_text(size=16),
+        legend.position="bottom")
+
+f2f_prop_plot <- data_keepers_item_f2f %>%
+  group_by(language_group, block) %>%
+  summarize(mean = mean(accuracy, na.rm = T),
+            sd = sd(accuracy, na.rm = T),
+            se = sd / sqrt(n()),
+            CI_lower = mean - (1.96 * se),
+            CI_upper = mean + (1.96 * se)) %>%
+  rename(accuracy = mean) %>%
+  ggplot(aes(x = block, y = accuracy, color = language_group, group = language_group)) +
+  geom_point(size = 5, alpha = .75) +
+  geom_line(aes(linetype = language_group, color = language_group), size = 2, alpha = .75) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), color = "black", position = pd, width=.1)  +
+  scale_color_manual(name = "Language group", values=c('#252525','#969696')) +
+  scale_linetype_manual(name = "Language group", values=c("solid", "longdash")) +
+  ylim(0, 1) +
+  theme_minimal() +
+  labs(title = "Panel B: Proportion of accuracy") +
+  xlab("Blocks") +
+  ylab("Proportion of accuracy") +
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=18),
+        legend.text=element_text(size=16),
+        legend.position="bottom")
+
+f2f_rt_plot <- data_keepers_item_f2f %>%
+  group_by(language_group, block) %>%
+  summarize(mean = mean(rt, na.rm = T),
+            sd = sd(rt, na.rm = T),
+            se = sd / sqrt(n()),
+            CI_lower = mean - (1.96 * se),
+            CI_upper = mean + (1.96 * se)) %>%
+  rename(rt = mean) %>%
+  ggplot(aes(x = block, y = rt, color = language_group, group = language_group)) +
+  geom_point(size = 5, alpha = .75) +
+  geom_line(aes(linetype = language_group, color = language_group), size = 2, alpha = .75) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper), color = "black", position = pd, width=.1)  +
+  scale_color_manual(name = "Language group", values=c('#252525','#969696')) +
+  scale_linetype_manual(name = "Language group", values=c("solid", "longdash")) +
+  ylim(0, 2000) +
+  theme_minimal() +
+  labs(title = "\n Panel C: Response time") +
+  xlab("Blocks") +
+  ylab("Response time (ms)") +
+  theme(plot.title = element_text(hjust = 0.5),
+        text = element_text(size=18),
+        legend.text=element_text(size=16),
+        legend.position="bottom")
+
+
+plot_f2f <- ggarrange(f2f_d_plot, f2f_prop_plot , f2f_rt_plot ,
+                      nrow = 2, ncol = 2,
+                      common.legend = TRUE,
+                      legend = "bottom")
+```
+
+
+## Average plots by block and language group
+```{r echo=FALSE, message=FALSE, fig.height=12, fig.width=12}
+plot_f2f
+```
+
+
+## Accuracy: D' score
+### Average d' score
+```{r echo=FALSE, message=FALSE}
+data_keepers %>%
+  filter(test_group == "f2f") %>%
+  select(participant_id, age, sex, test_group, language_group, matches("_control"), matches("_orthogonal")) %>%
+  pivot_longer(-c(participant_id, age, sex, test_group, language_group), names_to = c(".value", "block"), names_sep = "_") %>%
+  mutate(block = as.factor(block)) %>%
+  group_by(test_group, language_group, block) %>%
+  summarize(mean_dprime = mean(dprime, na.rm = T),
+            sd_dprime = sd(dprime, na.rm = T),
+            min_dprime = min(dprime, na.rm = T),
+            max_dprime = max(dprime, na.rm = T)) %>%
+  mutate(across(where(is.numeric), round, 2))
+```
+
+```{r echo=FALSE, message=FALSE, fig.height=6, fig.width=12}
+average <- data_keepers %>%
+  filter(test_group == "f2f") %>%
+  select(participant_id, age, sex, test_group, language_group, matches("_control"), matches("_orthogonal")) %>%
+  select(-test_group) %>%
+  pivot_longer(-c(participant_id, age, sex, language_group), names_to = c(".value", "block"),
+               names_sep = "_") %>%
+  mutate(block = as.factor(block)) %>%
+  group_by(language_group, block) %>%
+  summarize(mean = mean(dprime, na.rm = T),
+            sd = sd(dprime, na.rm = T)) %>%
+  rename(dprime = mean)
+
+data_keepers %>%
+  filter(test_group == "f2f") %>%
+  select(participant_id, age, sex, test_group, language_group, matches("_control"), matches("_orthogonal")) %>%
+  select(-test_group) %>%
+  pivot_longer(-c(participant_id, age, sex, language_group), names_to = c(".value", "block"),
+               names_sep = "_") %>%
+  mutate(block = as.factor(block)) %>%
+  group_by(language_group, block) %>%
+  ggplot(aes(x = block, y = dprime)) +
+  geom_point(size = 2, alpha = 0.3) +
+  geom_line(aes(group = participant_id), size = 1, alpha = 0.3) +
+  facet_grid(. ~ language_group) +
+  geom_point(data = average, size = 5, color = "red") +
+  geom_line(data = average, aes(group = language_group), color = "red", size = 2) +
+  theme_minimal() +
+  labs(title = "Plotting data per participant with the red line showing the group means") +
+  theme(text = element_text(size=18),
+        legend.position="bottom")
+```
+
+### Pairwise t-test
+```{r echo=FALSE}
+f2f_dprime <- data_keepers %>%
+  filter(language_group == "Cantonese") %>%
+  select(-language_group) %>%
+  filter(test_group == "f2f") 
+
+t.test(f2f_dprime$dprime_control, f2f_dprime$dprime_orthogonal, paired = TRUE)
+
+```
+
+## Accuracy: Proportion of accuracy
+### Average proportion of accuracy
+```{r echo=FALSE, message=FALSE}
+data_keepers_item_f2f %>%
+  group_by(test_group, language_group, participant_id, block) %>%
+  summarize(mean = mean(accuracy, na.rm = T),
+            sd = sd(accuracy, na.rm = T)) %>%
+  rename(accuracy = mean) %>%
+  group_by(test_group, language_group, block) %>%
+  summarize(mean = mean(accuracy, na.rm = T),
+            sd = sd(accuracy, na.rm = T),
+            min = min(accuracy, na.rm = T),
+            max = max(accuracy, na.rm = T)) %>%
+  rename(mean_proportion = mean) %>%
+  mutate(across(where(is.numeric), round, 2))
+```
+
+```{r echo=FALSE, message=FALSE, fig.height=6, fig.width=12}
+average <- data_keepers_item_f2f %>%
+  group_by(language_group, block) %>%
+  summarize(mean_acc = mean(accuracy, na.rm = T),
+            sd_acc = sd(accuracy, na.rm = T),
+            mean_rt = mean(rt, na.rm = T),
+            sd_rt = sd(rt, na.rm = T)) %>%
+  rename(accuracy = mean_acc, rt = mean_rt)
+
+data_keepers_item_f2f %>%
+  group_by(language_group, block, participant_id) %>%
+  summarize(accuracy = mean(accuracy, na.rm = T),
+            rt = mean(rt, na.rm = T)) %>%
+  group_by(language_group, block) %>%
+  ggplot(aes(x = block, y = accuracy)) +
+  geom_point(size = 2, alpha = 0.3) +
+  geom_line(aes(group = participant_id), size = 1, alpha = 0.3) +
+  facet_grid(. ~ language_group) +
+  geom_point(data = average, size = 5, color = "red") +
+  geom_line(data = average, aes(group = language_group), color = "red", size = 2) +
+  ylim(0, 1) +
+  theme_minimal() +
+  labs(title = "Plotting data per participant with the red line showing the group means") +
+  theme(text = element_text(size=18),
+        legend.position="bottom")
+```
+
+### Logistic mixed-effects model
+Model ran: glmer(accuracy ~ block + (1 + block|participant_id) + (1|item_no) + (1|tone_pairs)) 
+```{r echo=FALSE}
+f2f_prop_model_acc <- data_keepers_item_f2f %>%
+  filter(language_group == "Cantonese") %>%
+  glmer(accuracy ~ block + (1+ block|participant_id) + (1|item_no) + (1|tone) + (1|syllable),
+        data = ., family=binomial)
+
+
+broom.mixed::tidy(f2f_prop_model_acc) %>%
+  rename(SE = "std.error", 
+         z = "statistic") %>%
+  mutate(across(where(is.numeric), round, 3)) %>%
+  mutate(p.value = case_when(
+    p.value < .001 ~ "<.001",
+    p.value < .01 ~ "<.01",
+    p.value < .05 ~ "<.05",
+    TRUE ~ as.character(p.value)))
+
+# --- goodness-of-fit test ---
+#testUniformity(f2f_prop_model_acc)
+#testDispersion(f2f_prop_model_acc) 
+#plotQQunif(f2f_prop_model_acc)
+```
+
+
+## Response time
+### Average response time
+```{r echo=FALSE, message=FALSE}
+data_keepers_item_f2f %>%
+  group_by(test_group, language_group, participant_id, block) %>%
+  summarize(mean = mean(rt, na.rm = T),
+            sd = sd(rt, na.rm = T)) %>%
+  rename(rt = mean) %>%
+  group_by(test_group, language_group, block) %>%
+  summarize(mean = mean(rt, na.rm = T),
+            sd = sd(rt, na.rm = T),
+            min = min(rt, na.rm = T),
+            max = max(rt, na.rm = T)) %>%
+  rename(mean_rt = mean) %>%
+  mutate(across(where(is.numeric), round, 2))
+```
+
+```{r echo=FALSE, message=FALSE, fig.height=6, fig.width=12}
+average <- data_keepers_item_f2f %>%
+  group_by(language_group, block) %>%
+  summarize(mean_acc = mean(accuracy, na.rm = T),
+            sd_acc = sd(accuracy, na.rm = T),
+            mean_rt = mean(rt, na.rm = T),
+            sd_rt = sd(rt, na.rm = T)) %>%
+  rename(accuracy = mean_acc, rt = mean_rt)
+
+data_keepers_item_f2f %>%
+  group_by(language_group, block, participant_id) %>%
+  summarize(accuracy = mean(accuracy, na.rm = T),
+            rt = mean(rt, na.rm = T)) %>%
+  group_by(language_group, block) %>%
+  ggplot(aes(x = block, y = rt)) +
+  geom_point(size = 2, alpha = 0.3) +
+  geom_line(aes(group = participant_id), size = 1, alpha = 0.3) +
+  facet_grid(. ~ language_group) +
+  geom_point(data = average, size = 5, color = "red") +
+  geom_line(data = average, aes(group = language_group), color = "red", size = 2) +
+  ylim(0, 5000) +
+  theme_minimal() +
+  labs(title = "Plotting data per participant with the red line showing the group means") +
+  theme(text = element_text(size=18),
+        legend.position="bottom")
+
+```
+
+### Linear mixed-effects model
+Model ran: lmer(log_rt ~ block + (1 + block|participant_id) + (1|item_no) + (1|tone_pairs)) 
+```{r echo=FALSE}
+f2f_prop_model_rt <- data_keepers_item_f2f %>%
+  filter(language_group == "Cantonese") %>%
+  mutate(log_rt = log(rt)) %>%
+  lmer(log_rt ~ block + (1+ block|participant_id) + (1|item_no) + (1|tone) + (1|syllable),
+        data = .)
+
+broom.mixed::tidy(f2f_prop_model_rt) %>%
+  rename(SE = "std.error", 
+         t = "statistic") %>%
+  mutate(across(where(is.numeric), round, 3)) %>%
+  mutate(p.value = case_when(
+    p.value < .001 ~ "<.001",
+    p.value < .01 ~ "<.01",
+    p.value < .05 ~ "<.05",
+    TRUE ~ as.character(p.value)))
+
+# --- goodness-of-fit test ---
+#testUniformity(f2f_prop_model_rt)
+#testDispersion(f2f_prop_model_rt) 
+#plotQQunif(f2f_prop_model_rt)
+```
